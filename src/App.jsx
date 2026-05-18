@@ -4,11 +4,10 @@ import PizZip from 'pizzip';
 import Docxtemplater from 'docxtemplater';
 import { saveAs } from 'file-saver';
 
-// FUNCIÓN AUXILIAR PARA CONVERTIR NÚMEROS A LETRAS (Especial para soles peruanos)
+// FUNCIÓN AUXILIAR CORREGIDA PARA CONVERTIR NÚMEROS A LETRAS
 function numeroALetras(num) {
   if (num === undefined || num === null) return '';
   
-  // Redondear a dos decimales y tomar solo la parte entera para las letras
   const entero = Math.floor(Math.round(num * 100) / 100);
 
   const Unidades = (num) => {
@@ -20,7 +19,7 @@ function numeroALetras(num) {
     return '';
   };
 
-  const DecenasAnd= (strSin, numUnidades) => {
+  const DecenasAnd = (strSin, numUnidades) => {
     if (numUnidades > 0) return strSin + ' Y ' + Unidades(numUnidades);
     return strSin;
   };
@@ -68,35 +67,34 @@ function numeroALetras(num) {
     }
   };
 
-  const Seccion = (num, divisor, strSingular, strPlural) => {
-    let cientos = Math.floor(num / divisor);
-    let resto = num - (cientos * divisor);
-    let letras = '';
-    if (cientos > 0) {
-      if (cientos > 1) letras = Centenas(cientos) + ' ' + strPlural;
-      else letras = strSingular;
-    } else {
-      letras = strSingular;
-    }
-    if (resto > 0) letras += '';
-    return letras;
-  };
-
-  const Miles = (num) => {
-    let divisor = 1000;
-    let cientos = Math.floor(num / divisor);
-    let resto = num - (cientos * divisor);
-    let strMiles = Seccion(num, divisor, 'MIL', 'MIL');
-    let strCentenas = Centenas(resto);
-    if (strMiles === '') return strCentenas;
-    return strMiles + ' ' + strCentenas;
-  };
-
+  // SOLUCIÓN AL BUG: Si no llega a los miles, pasa directo a las centenas
   if (entero === 0) return 'CERO';
-  return Miles(entero).trim();
+  if (entero < 1000) return Centenas(entero).trim();
+
+  // Lógica para números mayores a 1000
+  let miles = Math.floor(entero / 1000);
+  let resto = entero % 1000;
+  let strMiles = '';
+
+  if (miles === 1) {
+    strMiles = 'MIL';
+  } else if (miles > 1) {
+    strMiles = Centenas(miles) + ' MIL';
+  }
+
+  let strCentenas = resto > 0 ? ' ' + Centenas(resto) : '';
+  return (strMiles + strCentenas).trim();
 }
 
-// FUNCIÓN PARA CONVERTIR SÓLO EL NÚMERO DE CUOTAS A LETRAS EN MAYÚSCULAS
+// FUNCIÓN PARA EL NOMBRE DEL MES EN LETRAS
+function obtenerNombreMes(numeroMes) {
+  const meses = [
+    'ENERO', 'FEBRERO', 'MARZO', 'ABRIL', 'MAYO', 'JUNIO',
+    'JULIO', 'AGOSTO', 'SEPTIEMBRE', 'OCTUBRE', 'NOVIEMBRE', 'DICIEMBRE'
+  ];
+  return meses[parseInt(numeroMes, 10) - 1] || '__________';
+}
+
 function cuotasALetras(num) {
   const cuotas = parseInt(num, 10);
   const lista = ['CERO', 'UNA', 'DOS', 'TRES', 'CUATRO', 'CINCO', 'SEIS', 'SIETE', 'OCHO', 'NUEVE', 'DIEZ', 'ONCE', 'DOCE'];
@@ -136,38 +134,37 @@ function App() {
 
       if (datosExcel.length === 0) throw new Error('Excel vacío');
 
-      // CLONAMOS LOS DATOS ORIGINALES PARA NO DEFORMAR EL EXCEL
       const datosParaWord = { ...datosExcel[0] };
 
-      // 1. PROCESAR LA FECHA (Quitar horas, minutos y segundos)
+      // 1. PROCESAR LA FECHA PRINCIPAL Y EXTRAER DÍA/MES
       if (datosParaWord['FECHA_SOLICITUD']) {
         const fechaCruda = datosParaWord['FECHA_SOLICITUD'].toString().trim();
-        // Corta los primeros 10 caracteres (YYYY-MM-DD)
         const soloFecha = fechaCruda.substring(0, 10); 
         
-        // Opcional: Convertirla a formato Latino (DD/MM/YYYY) si viene como YYYY-MM-DD
         if (soloFecha.includes('-')) {
           const [anio, mes, dia] = soloFecha.split('-');
           datosParaWord['FECHA_SOLICITUD'] = `${dia}/${mes}/${anio}`;
+          datosParaWord['DIA_SOLICITUD'] = dia; // Guarda el día (ej: 18)
+          datosParaWord['MES_SOLICITUD'] = obtenerNombreMes(mes); // Guarda el mes en letras (ej: MAYO)
         } else {
           datosParaWord['FECHA_SOLICITUD'] = soloFecha;
+          datosParaWord['DIA_SOLICITUD'] = '__';
+          datosParaWord['MES_SOLICITUD'] = '_____';
         }
       }
 
-      // 2. FORMATEAR CUOTAS (Agregar el 0 adelante si es menor a 10)
+      // 2. FORMATEAR CUOTAS
       const numCuotas = parseInt(datosParaWord['CUOTAS N°'], 10) || 0;
       datosParaWord['CUOTAS_NUM_FORMATO'] = numCuotas < 10 ? `0${numCuotas}` : `${numCuotas}`;
       datosParaWord['CUOTAS_LETRAS'] = cuotasALetras(numCuotas);
 
-      // 3. CONVERTIR MONTOS NUMÉRICOS A TEXTO EN LETRAS
+      // 3. CONVERTIR MONTOS A TEXTO (CON FIX DE MILES)
       const montoTotal = parseFloat(datosParaWord['TOTAL_CONVENIOS']) || 0;
       const montoCuota = parseFloat(datosParaWord['VALOR CUOTA']) || 0;
 
       datosParaWord['MONTO_LETRAS'] = numeroALetras(montoTotal);
       datosParaWord['CUOTA_LETRAS'] = numeroALetras(montoCuota);
 
-
-      // PROCESAMIENTO ESTÁNDAR DEL WORD
       const respuesta = await fetch('/plantilla.docx');
       if (!respuesta.ok) throw new Error('Plantilla no encontrada');
       
@@ -189,8 +186,6 @@ function App() {
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 relative flex flex-col items-center justify-center p-6 font-sans overflow-hidden transition-colors duration-500">
-      
-      {/* BOTÓN MODO OSCURO / CLARO */}
       <button 
         onClick={() => setDarkMode(!darkMode)}
         className="absolute top-6 right-6 p-3 rounded-full bg-white dark:bg-slate-800 text-slate-600 dark:text-yellow-400 shadow-lg border border-slate-200 dark:border-slate-700 hover:scale-110 transition-all duration-300 z-50"
@@ -206,16 +201,12 @@ function App() {
         )}
       </button>
 
-      {/* Decoración de fondo */}
       <div className="absolute top-0 left-1/4 w-96 h-96 bg-indigo-500/10 dark:bg-indigo-500/20 rounded-full blur-[128px] pointer-events-none transition-colors duration-500" />
       <div className="absolute bottom-0 right-1/4 w-96 h-96 bg-emerald-500/10 rounded-full blur-[128px] pointer-events-none transition-colors duration-500" />
 
-      {/* CONTENEDOR PRINCIPAL */}
       <div className="bg-white dark:bg-slate-900/60 backdrop-blur-xl p-14 rounded-3xl shadow-xl dark:shadow-[0_35px_100px_-15px_rgba(0,0,0,0.3)] max-w-xl w-full border border-slate-200 dark:border-slate-800 transition-all duration-500 ease-out hover:border-indigo-400/50 dark:hover:border-indigo-500/30 hover:scale-[1.01] hover:-translate-y-1 relative group z-10">
-        
         <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-indigo-500 via-purple-500 to-emerald-500 rounded-t-3xl" />
         
-        {/* Cabecera */}
         <div className="text-center mb-12">
           <div className="inline-flex items-center justify-center w-22 h-22 rounded-2xl bg-indigo-50 dark:bg-slate-800 border border-indigo-100 dark:border-slate-700 shadow-md mb-8 relative overflow-hidden group-hover:border-indigo-500 transition-colors">
             <div className="absolute inset-0 bg-gradient-to-br from-indigo-600 to-purple-600 opacity-0 group-hover:opacity-10 transition-opacity" />
@@ -231,7 +222,6 @@ function App() {
           </p>
         </div>
         
-        {/* ÁREA DE SUBIDA */}
         <div 
           className="mb-12 relative group/drop"
           onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
@@ -272,12 +262,10 @@ function App() {
                 </>
               )}
             </div>
-            
             <input type="file" accept=".xlsx, .xls" onChange={manejarSubida} className="hidden" />
           </label>
         </div>
 
-        {/* BOTÓN DE ACCIÓN */}
         <button
           onClick={generarDocumento}
           disabled={!archivoExcel || cargando}
@@ -300,24 +288,18 @@ function App() {
           ) : (
             'Esperando fuente de datos'
           )}
-          
           <div className="absolute top-0 -inset-full h-full w-1/2 block transform -skew-x-12 bg-gradient-to-r from-transparent to-white opacity-20 group-hover/btn:animate-shine" />
         </button>
       </div>
 
-      {/* Footer */}
       <div className="mt-18 text-center text-base text-slate-500 dark:text-slate-600 font-semibold tracking-wide border-t border-slate-200 dark:border-slate-800 pt-8 max-w-sm mx-auto transition-colors">
         SMART CASH TOOL
         <span className="text-slate-400 dark:text-slate-700 block text-sm mt-1.5">v1.2 | Procesamiento Local Seguro</span>
       </div>
 
       <style>{`
-        @keyframes shine {
-          100% { left: 125%; }
-        }
-        .animate-shine {
-          animation: shine 1s;
-        }
+        @keyframes shine { 100% { left: 125%; } }
+        .animate-shine { animation: shine 1s; }
       `}</style>
     </div>
   );
