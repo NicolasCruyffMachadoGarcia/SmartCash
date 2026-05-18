@@ -4,20 +4,114 @@ import PizZip from 'pizzip';
 import Docxtemplater from 'docxtemplater';
 import { saveAs } from 'file-saver';
 
+// FUNCIÓN AUXILIAR PARA CONVERTIR NÚMEROS A LETRAS (Especial para soles peruanos)
+function numeroALetras(num) {
+  if (num === undefined || num === null) return '';
+  
+  // Redondear a dos decimales y tomar solo la parte entera para las letras
+  const entero = Math.floor(Math.round(num * 100) / 100);
+
+  const Unidades = (num) => {
+    switch (num) {
+      case 1: return 'UN'; case 2: return 'DOS'; case 3: return 'TRES';
+      case 4: return 'CUATRO'; case 5: return 'CINCO'; case 6: return 'SEIS';
+      case 7: return 'SIETE'; case 8: return 'OCHO'; case 9: return 'NUEVE';
+    }
+    return '';
+  };
+
+  const DecenasAnd= (strSin, numUnidades) => {
+    if (numUnidades > 0) return strSin + ' Y ' + Unidades(numUnidades);
+    return strSin;
+  };
+
+  const Decenas = (num) => {
+    let decena = Math.floor(num / 10);
+    let unidad = num - (decena * 10);
+    switch (decena) {
+      case 1:
+        switch (unidad) {
+          case 0: return 'DIEZ'; case 1: return 'ONCE'; case 2: return 'DOCE';
+          case 3: return 'TRECE'; case 4: return 'CATORCE'; case 5: return 'QUINCE';
+          default: return 'DIECI' + Unidades(unidad);
+        }
+      case 2:
+        if (unidad === 0) return 'VEINTE';
+        return 'VEINTI' + Unidades(unidad);
+      case 3: return DecenasAnd('TREINTA', unidad);
+      case 4: return DecenasAnd('CUARENTA', unidad);
+      case 5: return DecenasAnd('CINCUENTA', unidad);
+      case 6: return DecenasAnd('SESENTA', unidad);
+      case 7: return DecenasAnd('SETENTA', unidad);
+      case 8: return DecenasAnd('OCHENTA', unidad);
+      case 9: return DecenasAnd('NOVENTA', unidad);
+      case 0: return Unidades(unidad);
+    }
+  };
+
+  const Centenas = (num) => {
+    let centena = Math.floor(num / 100);
+    let decena = num - (centena * 100);
+    switch (centena) {
+      case 1:
+        if (decena > 0) return 'CIENTO ' + Decenas(decena);
+        return 'CIEN';
+      case 2: return 'DOSCIENTOS ' + Decenas(decena);
+      case 3: return 'TRESCIENTOS ' + Decenas(decena);
+      case 4: return 'CUATROCIENTOS ' + Decenas(decena);
+      case 5: return 'QUINIENTOS ' + Decenas(decena);
+      case 6: return 'SEISCIENTOS ' + Decenas(decena);
+      case 7: return 'SETECIENTOS ' + Decenas(decena);
+      case 8: return 'OCHOCIENTOS ' + Decenas(decena);
+      case 9: return 'NOVECIENTOS ' + Decenas(decena);
+      case 0: return Decenas(decena);
+    }
+  };
+
+  const Seccion = (num, divisor, strSingular, strPlural) => {
+    let cientos = Math.floor(num / divisor);
+    let resto = num - (cientos * divisor);
+    let letras = '';
+    if (cientos > 0) {
+      if (cientos > 1) letras = Centenas(cientos) + ' ' + strPlural;
+      else letras = strSingular;
+    } else {
+      letras = strSingular;
+    }
+    if (resto > 0) letras += '';
+    return letras;
+  };
+
+  const Miles = (num) => {
+    let divisor = 1000;
+    let cientos = Math.floor(num / divisor);
+    let resto = num - (cientos * divisor);
+    let strMiles = Seccion(num, divisor, 'MIL', 'MIL');
+    let strCentenas = Centenas(resto);
+    if (strMiles === '') return strCentenas;
+    return strMiles + ' ' + strCentenas;
+  };
+
+  if (entero === 0) return 'CERO';
+  return Miles(entero).trim();
+}
+
+// FUNCIÓN PARA CONVERTIR SÓLO EL NÚMERO DE CUOTAS A LETRAS EN MAYÚSCULAS
+function cuotasALetras(num) {
+  const cuotas = parseInt(num, 10);
+  const lista = ['CERO', 'UNA', 'DOS', 'TRES', 'CUATRO', 'CINCO', 'SEIS', 'SIETE', 'OCHO', 'NUEVE', 'DIEZ', 'ONCE', 'DOCE'];
+  return lista[cuotas] || num.toString();
+}
+
 function App() {
   const [archivoExcel, setArchivoExcel] = useState(null);
   const [cargando, setCargando] = useState(false);
   const [dragOver, setDragOver] = useState(false);
-  
-  // ESTADO PARA EL MODO OSCURO
   const [darkMode, setDarkMode] = useState(false);
 
   useEffect(() => {
-    if (darkMode) {
-      document.documentElement.classList.add('dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-    }
+    if (darkMode) document.documentElement.classList.add('dark');
+    else document.documentElement.classList.remove('dark');
   }, [darkMode]);
 
   const manejarSubida = (e) => {
@@ -42,7 +136,38 @@ function App() {
 
       if (datosExcel.length === 0) throw new Error('Excel vacío');
 
-      const datosParaWord = datosExcel[0];
+      // CLONAMOS LOS DATOS ORIGINALES PARA NO DEFORMAR EL EXCEL
+      const datosParaWord = { ...datosExcel[0] };
+
+      // 1. PROCESAR LA FECHA (Quitar horas, minutos y segundos)
+      if (datosParaWord['FECHA_SOLICITUD']) {
+        const fechaCruda = datosParaWord['FECHA_SOLICITUD'].toString().trim();
+        // Corta los primeros 10 caracteres (YYYY-MM-DD)
+        const soloFecha = fechaCruda.substring(0, 10); 
+        
+        // Opcional: Convertirla a formato Latino (DD/MM/YYYY) si viene como YYYY-MM-DD
+        if (soloFecha.includes('-')) {
+          const [anio, mes, dia] = soloFecha.split('-');
+          datosParaWord['FECHA_SOLICITUD'] = `${dia}/${mes}/${anio}`;
+        } else {
+          datosParaWord['FECHA_SOLICITUD'] = soloFecha;
+        }
+      }
+
+      // 2. FORMATEAR CUOTAS (Agregar el 0 adelante si es menor a 10)
+      const numCuotas = parseInt(datosParaWord['CUOTAS N°'], 10) || 0;
+      datosParaWord['CUOTAS_NUM_FORMATO'] = numCuotas < 10 ? `0${numCuotas}` : `${numCuotas}`;
+      datosParaWord['CUOTAS_LETRAS'] = cuotasALetras(numCuotas);
+
+      // 3. CONVERTIR MONTOS NUMÉRICOS A TEXTO EN LETRAS
+      const montoTotal = parseFloat(datosParaWord['TOTAL_CONVENIOS']) || 0;
+      const montoCuota = parseFloat(datosParaWord['VALOR CUOTA']) || 0;
+
+      datosParaWord['MONTO_LETRAS'] = numeroALetras(montoTotal);
+      datosParaWord['CUOTA_LETRAS'] = numeroALetras(montoCuota);
+
+
+      // PROCESAMIENTO ESTÁNDAR DEL WORD
       const respuesta = await fetch('/plantilla.docx');
       if (!respuesta.ok) throw new Error('Plantilla no encontrada');
       
@@ -69,7 +194,6 @@ function App() {
       <button 
         onClick={() => setDarkMode(!darkMode)}
         className="absolute top-6 right-6 p-3 rounded-full bg-white dark:bg-slate-800 text-slate-600 dark:text-yellow-400 shadow-lg border border-slate-200 dark:border-slate-700 hover:scale-110 transition-all duration-300 z-50"
-        title="Alternar Modo Oscuro"
       >
         {darkMode ? (
           <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -100,7 +224,7 @@ function App() {
             </svg>
           </div>
           <h1 className="text-4xl font-extrabold text-slate-800 dark:text-white tracking-tighter leading-tight transition-colors">
-            Automatización de documentos
+            Document Automation
           </h1>
           <p className="text-slate-600 dark:text-slate-400 mt-4 text-lg max-w-sm mx-auto font-medium leading-relaxed transition-colors">
             Sube tu fuente de datos Excel para autocompletar la Hoja Resumen al instante.
