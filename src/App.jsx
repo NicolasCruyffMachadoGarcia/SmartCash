@@ -100,7 +100,7 @@ function App() {
             </svg>
           </div>
           <h1 className="text-4xl font-extrabold text-slate-800 dark:text-white tracking-tighter leading-tight transition-colors">
-            Document Automation
+            Automatización de documentos
           </h1>
           <p className="text-slate-600 dark:text-slate-400 mt-4 text-lg max-w-sm mx-auto font-medium leading-relaxed transition-colors">
             Sube tu fuente de datos Excel para autocompletar la Hoja Resumen al instante.
