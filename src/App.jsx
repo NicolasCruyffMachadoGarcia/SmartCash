@@ -236,7 +236,7 @@ function App() {
             </svg>
           </div>
           <h1 className="text-4xl font-extrabold text-slate-800 dark:text-white tracking-tighter leading-tight transition-colors">
-            Masive Export
+            De excel a word masivo
           </h1>
           <p className="text-slate-600 dark:text-slate-400 mt-4 text-lg max-w-sm mx-auto font-medium leading-relaxed transition-colors">
             Sube un Excel con múltiples filas. El sistema generará un Word independiente por cada cliente.
