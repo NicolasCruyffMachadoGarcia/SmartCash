@@ -215,7 +215,7 @@ function App() {
             </svg>
           </div>
           <h1 className="text-4xl font-extrabold text-slate-800 dark:text-white tracking-tighter leading-tight transition-colors">
-            Document Automation
+            Convertidor de Excel a Word
           </h1>
           <p className="text-slate-600 dark:text-slate-400 mt-4 text-lg max-w-sm mx-auto font-medium leading-relaxed transition-colors">
             Sube tu fuente de datos Excel para autocompletar la Hoja Resumen al instante.
@@ -293,8 +293,8 @@ function App() {
       </div>
 
       <div className="mt-18 text-center text-base text-slate-500 dark:text-slate-600 font-semibold tracking-wide border-t border-slate-200 dark:border-slate-800 pt-8 max-w-sm mx-auto transition-colors">
-        SMART CASH TOOL
-        <span className="text-slate-400 dark:text-slate-700 block text-sm mt-1.5">v1.2 | Procesamiento Local Seguro</span>
+        SMART CASH 
+        <span className="text-slate-400 dark:text-slate-700 block text-sm mt-1.5">Herramienta V1</span>
       </div>
 
       <style>{`
