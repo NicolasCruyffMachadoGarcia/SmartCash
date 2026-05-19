@@ -4,7 +4,7 @@ import PizZip from 'pizzip';
 import Docxtemplater from 'docxtemplater';
 import { saveAs } from 'file-saver';
 
-// FUNCIÓN AUXILIAR CORREGIDA PARA CONVERTIR NÚMEROS A LETRAS
+// FUNCIÓN AUXILIAR PARA CONVERTIR NÚMEROS A LETRAS
 function numeroALetras(num) {
   if (num === undefined || num === null) return '';
   
@@ -67,11 +67,9 @@ function numeroALetras(num) {
     }
   };
 
-  // SOLUCIÓN AL BUG: Si no llega a los miles, pasa directo a las centenas
   if (entero === 0) return 'CERO';
   if (entero < 1000) return Centenas(entero).trim();
 
-  // Lógica para números mayores a 1000
   let miles = Math.floor(entero / 1000);
   let resto = entero % 1000;
   let strMiles = '';
@@ -86,7 +84,6 @@ function numeroALetras(num) {
   return (strMiles + strCentenas).trim();
 }
 
-// FUNCIÓN PARA EL NOMBRE DEL MES EN LETRAS
 function obtenerNombreMes(numeroMes) {
   const meses = [
     'ENERO', 'FEBRERO', 'MARZO', 'ABRIL', 'MAYO', 'JUNIO',
@@ -106,6 +103,7 @@ function App() {
   const [cargando, setCargando] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [darkMode, setDarkMode] = useState(false);
+  const [totalFilas, setTotalFilas] = useState(0);
 
   useEffect(() => {
     if (darkMode) document.documentElement.classList.add('dark');
@@ -116,13 +114,25 @@ function App() {
     const file = e.target.files?.[0] || e.dataTransfer?.files?.[0];
     if (file && (file.name.endsWith('.xlsx') || file.name.endsWith('.xls'))) {
       setArchivoExcel(file);
+      
+      // Leer rápido el número de filas para mostrar en la interfaz
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const data = new Uint8Array(e.target.result);
+        const workbook = XLSX.read(data, { type: 'array' });
+        const hoja = workbook.Sheets[workbook.SheetNames[0]];
+        const datos = XLSX.utils.sheet_to_json(hoja);
+        setTotalFilas(datos.length);
+      };
+      reader.readAsArrayBuffer(file);
+
     } else {
       alert('Por favor, sube un archivo Excel válido (.xlsx o .xls)');
     }
     setDragOver(false);
   };
 
-  const generarDocumento = async () => {
+  const generarDocumentosMasivos = async () => {
     if (!archivoExcel) return;
     setCargando(true);
 
@@ -134,51 +144,62 @@ function App() {
 
       if (datosExcel.length === 0) throw new Error('Excel vacío');
 
-      const datosParaWord = { ...datosExcel[0] };
+      // Traer la plantilla base una sola vez para ahorrar consumo de red
+      const respuestaPlantilla = await fetch('/plantilla.docx');
+      if (!respuestaPlantilla.ok) throw new Error('Plantilla no encontrada');
+      const arrayBufferPlantilla = await respuestaPlantilla.arrayBuffer();
 
-      // 1. PROCESAR LA FECHA PRINCIPAL Y EXTRAER DÍA/MES
-      if (datosParaWord['FECHA_SOLICITUD']) {
-        const fechaCruda = datosParaWord['FECHA_SOLICITUD'].toString().trim();
-        const soloFecha = fechaCruda.substring(0, 10); 
-        
-        if (soloFecha.includes('-')) {
-          const [anio, mes, dia] = soloFecha.split('-');
-          datosParaWord['FECHA_SOLICITUD'] = `${dia}/${mes}/${anio}`;
-          datosParaWord['DIA_SOLICITUD'] = dia; // Guarda el día (ej: 18)
-          datosParaWord['MES_SOLICITUD'] = obtenerNombreMes(mes); // Guarda el mes en letras (ej: MAYO)
-        } else {
-          datosParaWord['FECHA_SOLICITUD'] = soloFecha;
-          datosParaWord['DIA_SOLICITUD'] = '__';
-          datosParaWord['MES_SOLICITUD'] = '_____';
+      // RECORREMOS CADA FILA DEL EXCEL (PROCESAMIENTO MASIVO)
+      for (const fila of datosExcel) {
+        const datosParaWord = { ...fila };
+        const dniCliente = datosParaWord['N°_DOCUMENTO'] || 'Sin_DNI';
+
+        // 1. Procesar Fechas por cada fila
+        if (datosParaWord['FECHA_SOLICITUD']) {
+          const fechaCruda = datosParaWord['FECHA_SOLICITUD'].toString().trim();
+          const soloFecha = fechaCruda.substring(0, 10); 
+          
+          if (soloFecha.includes('-')) {
+            const [anio, mes, dia] = soloFecha.split('-');
+            datosParaWord['FECHA_SOLICITUD'] = `${dia}/${mes}/${anio}`;
+            datosParaWord['DIA_SOLICITUD'] = dia;
+            datosParaWord['MES_SOLICITUD'] = obtenerNombreMes(mes);
+          } else {
+            datosParaWord['FECHA_SOLICITUD'] = soloFecha;
+            datosParaWord['DIA_SOLICITUD'] = '__';
+            datosParaWord['MES_SOLICITUD'] = '_____';
+          }
         }
+
+        // 2. Formatear Cuotas por cada fila
+        const numCuotas = parseInt(datosParaWord['CUOTAS N°'], 10) || 0;
+        datosParaWord['CUOTAS_NUM_FORMATO'] = numCuotas < 10 ? `0${numCuotas}` : `${numCuotas}`;
+        datosParaWord['CUOTAS_LETRAS'] = cuotasALetras(numCuotas);
+
+        // 3. Convertir Montos Numéricos a Letras por cada fila
+        const montoTotal = parseFloat(datosParaWord['TOTAL_CONVENIOS']) || 0;
+        const montoCuota = parseFloat(datosParaWord['VALOR CUOTA']) || 0;
+
+        datosParaWord['MONTO_LETRAS'] = numeroALetras(montoTotal);
+        datosParaWord['CUOTA_LETRAS'] = numeroALetras(montoCuota);
+
+        // Generar el empaquetado del Word individual
+        const zip = new PizZip(arrayBufferPlantilla.slice(0)); 
+        const doc = new Docxtemplater(zip, { paragraphLoop: true, linebreaks: true });
+
+        doc.render(datosParaWord);
+        const out = doc.getZip().generate({ 
+          type: 'blob', 
+          mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' 
+        });
+
+        // DESCARGA AUTOMÁTICA DIFERENCIADA POR DNI
+        saveAs(out, `Hoja_Resumen_DNI_${dniCliente}.docx`);
       }
-
-      // 2. FORMATEAR CUOTAS
-      const numCuotas = parseInt(datosParaWord['CUOTAS N°'], 10) || 0;
-      datosParaWord['CUOTAS_NUM_FORMATO'] = numCuotas < 10 ? `0${numCuotas}` : `${numCuotas}`;
-      datosParaWord['CUOTAS_LETRAS'] = cuotasALetras(numCuotas);
-
-      // 3. CONVERTIR MONTOS A TEXTO (CON FIX DE MILES)
-      const montoTotal = parseFloat(datosParaWord['TOTAL_CONVENIOS']) || 0;
-      const montoCuota = parseFloat(datosParaWord['VALOR CUOTA']) || 0;
-
-      datosParaWord['MONTO_LETRAS'] = numeroALetras(montoTotal);
-      datosParaWord['CUOTA_LETRAS'] = numeroALetras(montoCuota);
-
-      const respuesta = await fetch('/plantilla.docx');
-      if (!respuesta.ok) throw new Error('Plantilla no encontrada');
-      
-      const zip = new PizZip(await (await respuesta.blob()).arrayBuffer());
-      const doc = new Docxtemplater(zip, { paragraphLoop: true, linebreaks: true });
-
-      doc.render(datosParaWord);
-      const out = doc.getZip().generate({ type: 'blob', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
-
-      saveAs(out, `Hoja_Resumen_${datosParaWord['N°_DOCUMENTO'] || 'Cliente'}.docx`);
 
     } catch (error) {
       console.error(error);
-      alert('Error procesando archivos.');
+      alert('Error procesando la exportación masiva.');
     } finally {
       setCargando(false);
     }
@@ -215,10 +236,10 @@ function App() {
             </svg>
           </div>
           <h1 className="text-4xl font-extrabold text-slate-800 dark:text-white tracking-tighter leading-tight transition-colors">
-            Convertidor de Excel a Word
+            Masive Export
           </h1>
           <p className="text-slate-600 dark:text-slate-400 mt-4 text-lg max-w-sm mx-auto font-medium leading-relaxed transition-colors">
-            Sube tu fuente de datos Excel para autocompletar la Hoja Resumen al instante.
+            Sube un Excel con múltiples filas. El sistema generará un Word independiente por cada cliente.
           </p>
         </div>
         
@@ -244,7 +265,9 @@ function App() {
                     </svg>
                   </div>
                   <p className="mb-2 text-base text-slate-800 dark:text-white font-bold tracking-tight truncate max-w-xs">{archivoExcel.name}</p>
-                  <p className="text-sm text-emerald-700 dark:text-emerald-300 font-medium bg-emerald-100 dark:bg-emerald-950 px-4 py-1.5 rounded-full border border-emerald-200 dark:border-emerald-500/30">Listo para procesar</p>
+                  <p className="text-sm text-emerald-700 dark:text-emerald-300 font-bold bg-emerald-100 dark:bg-emerald-950 px-4 py-1.5 rounded-full border border-emerald-200 dark:border-emerald-500/30">
+                    {totalFilas} {totalFilas === 1 ? 'cliente detectado' : 'clientes detectados'}
+                  </p>
                 </>
               ) : (
                 <>
@@ -267,7 +290,7 @@ function App() {
         </div>
 
         <button
-          onClick={generarDocumento}
+          onClick={generarDocumentosMasivos}
           disabled={!archivoExcel || cargando}
           className={`group/btn relative w-full py-4.5 px-7 rounded-2xl font-extrabold text-base uppercase tracking-widest transition-all duration-300 overflow-hidden flex justify-center items-center gap-3.5
             ${!archivoExcel || cargando 
@@ -281,10 +304,10 @@ function App() {
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
               </svg>
-              <span>Generando documento...</span>
+              <span>Generando {totalFilas} documentos...</span>
             </>
           ) : archivoExcel ? (
-            'Generar Hoja Resumen'
+            `Descargar ${totalFilas} Hojas Resumen`
           ) : (
             'Esperando fuente de datos'
           )}
@@ -293,8 +316,8 @@ function App() {
       </div>
 
       <div className="mt-18 text-center text-base text-slate-500 dark:text-slate-600 font-semibold tracking-wide border-t border-slate-200 dark:border-slate-800 pt-8 max-w-sm mx-auto transition-colors">
-        SMART CASH 
-        <span className="text-slate-400 dark:text-slate-700 block text-sm mt-1.5">Herramienta V1</span>
+        SMART CASH TOOL
+        <span className="text-slate-400 dark:text-slate-700 block text-sm mt-1.5">v2.0 | Exportación Masiva Habilitada</span>
       </div>
 
       <style>{`
