@@ -4,6 +4,31 @@ import PizZip from 'pizzip';
 import Docxtemplater from 'docxtemplater';
 import { saveAs } from 'file-saver';
 
+// DICCIONARIO DE RUCS DE EMPRESAS
+const diccRUCs = {
+  "IMPULSA365 S.A.C.": "20506760721",
+  "ECOMDATA PERU S.A.C.": "20538295541",
+  "TEC4BIZ PERU S.A.C.": "20601483689",
+  "CARE24 S.A.": "20606564946",
+  "ASISTENCIA 365 S.A.C.": "20565750730",
+  "QTECH EXPERIENCE S.A.C.": "20613921045",
+  "ACCION COMERCIAL 365 S.A.C.": "20614009021",
+  "RECUPERATE S.A.C.": "20606358882"
+};
+
+// FUNCIÓN PARA BUSCAR EL RUC
+function obtenerRUC(nombreEmpresa) {
+  if (!nombreEmpresa) return '__________';
+  const nombreUpper = nombreEmpresa.toString().trim().toUpperCase();
+  
+  for (const [empresa, ruc] of Object.entries(diccRUCs)) {
+    if (nombreUpper.includes(empresa) || empresa.includes(nombreUpper)) {
+      return ruc;
+    }
+  }
+  return '__________'; // Si no encuentra la empresa, deja el espacio en blanco
+}
+
 // FUNCIÓN AUXILIAR PARA CONVERTIR PARTE ENTERA A LETRAS
 function convertirParteEntera(entero) {
   const Unidades = (num) => {
@@ -161,7 +186,6 @@ function App() {
       if (!respuestaPlantilla.ok) throw new Error('Plantilla no encontrada');
       const arrayBufferPlantilla = await respuestaPlantilla.arrayBuffer();
 
-      // CAPTURAMOS LA FECHA ACTUAL DE HOY
       const hoy = new Date();
       const diaHoy = hoy.getDate() < 10 ? `0${hoy.getDate()}` : `${hoy.getDate()}`;
       const mesHoyNum = (hoy.getMonth() + 1) < 10 ? `0${hoy.getMonth() + 1}` : `${hoy.getMonth() + 1}`;
@@ -173,7 +197,7 @@ function App() {
         const datosParaWord = { ...fila };
         const dniCliente = datosParaWord['N°_DOCUMENTO'] || 'Sin_DNI';
 
-        // 1. FECHA ORIGINAL DEL EXCEL (Para la etiqueta {FECHA_SOLICITUD} de arriba)
+        // 1. FECHAS DE HOY Y DEL EXCEL SEPARADAS CORRECTAMENTE
         if (datosParaWord['FECHA_SOLICITUD']) {
           const fechaCruda = datosParaWord['FECHA_SOLICITUD'].toString().trim();
           const soloFecha = fechaCruda.substring(0, 10); 
@@ -186,34 +210,43 @@ function App() {
           }
         }
 
-        // 2. FECHA DE HOY (Para las etiquetas de abajo: {DIA_SOLICITUD}, {MES_SOLICITUD} y {FECHA_HOY})
         datosParaWord['FECHA_HOY'] = fechaHoyFormateada;
         datosParaWord['DIA_SOLICITUD'] = diaHoy;
         datosParaWord['MES_SOLICITUD'] = mesHoyStr;
 
-        // 3. Formatear N° de Cuotas
+        // 2. Formatear N° de Cuotas
         const numCuotas = parseInt(datosParaWord['CUOTAS N°'], 10) || 0;
         datosParaWord['CUOTAS_NUM_FORMATO'] = numCuotas < 10 ? `0${numCuotas}` : `${numCuotas}`;
         datosParaWord['CUOTAS_LETRAS'] = cuotasALetras(numCuotas);
 
-        // 4. Mapeo de montos en letras
+        // 3. Mapeo de montos en letras
         const montoTotal = parseFloat(datosParaWord['MONTO APROBADO']) || 0;
         const montoCuota = parseFloat(datosParaWord['VALOR CUOTA']) || 0;
 
         datosParaWord['MONTO_LETRAS'] = numeroALetras(montoTotal);
         datosParaWord['CUOTA_LETRAS'] = numeroALetras(montoCuota);
 
-        // 5. FIX TASA DE INTERÉS: Buscador inteligente para forzar 2 decimales
-        const tasaKey = Object.keys(datosParaWord).find(k => k.toLowerCase().includes('tasa') && k.toLowerCase().includes('compensatoria'));
-        
-        if (tasaKey) {
-          let tasaVal = datosParaWord[tasaKey].toString();
-          let num = parseFloat(tasaVal); // Extrae solo el número
-          if (!isNaN(num)) {
-            // Le forzamos los 2 decimales. Si tenía "%", se lo devolvemos.
-            datosParaWord[tasaKey] = tasaVal.includes('%') ? `${num.toFixed(2)}%` : num.toFixed(2);
+        // 4. FIX TASA DE INTERÉS
+        for (const key of Object.keys(datosParaWord)) {
+          const keyLower = key.toLowerCase();
+          if (keyLower.includes('tasa') || keyLower.includes('interes') || keyLower.includes('interés') || keyLower.includes('tea')) {
+            let valor = datosParaWord[key];
+            if (valor !== undefined && valor !== null) {
+              let valorStr = valor.toString().trim();
+              let tienePorcentaje = valorStr.includes('%');
+              let num = parseFloat(valorStr);
+              
+              if (!isNaN(num)) {
+                let valorFormateado = num.toFixed(2);
+                datosParaWord[key] = tienePorcentaje ? `${valorFormateado}%` : valorFormateado;
+              }
+            }
           }
         }
+
+        // 5. NUEVO: OBTENER RUC DE LA EMPRESA
+        // (Asume que la columna del nombre de empresa en tu Excel se llama "EMPRESA")
+        datosParaWord['RUC_EMPRESA'] = obtenerRUC(datosParaWord['EMPRESA']);
 
         // Construcción del documento individual
         const zip = new PizZip(arrayBufferPlantilla.slice(0)); 
