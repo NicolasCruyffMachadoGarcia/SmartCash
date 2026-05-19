@@ -4,12 +4,8 @@ import PizZip from 'pizzip';
 import Docxtemplater from 'docxtemplater';
 import { saveAs } from 'file-saver';
 
-// FUNCIÓN AUXILIAR PARA CONVERTIR NÚMEROS A LETRAS
-function numeroALetras(num) {
-  if (num === undefined || num === null) return '';
-  
-  const entero = Math.floor(Math.round(num * 100) / 100);
-
+// FUNCIÓN AUXILIAR PARA CONVERTIR PARTE ENTERA A LETRAS
+function convertirParteEntera(entero) {
   const Unidades = (num) => {
     switch (num) {
       case 1: return 'UN'; case 2: return 'DOS'; case 3: return 'TRES';
@@ -84,12 +80,31 @@ function numeroALetras(num) {
   return (strMiles + strCentenas).trim();
 }
 
+// FUNCIÓN PRINCIPAL PARA MONTOS CON DECIMALES
+function numeroALetras(num) {
+  if (num === undefined || num === null) return '';
+  
+  const valorFijo = (Math.round(num * 100) / 100).toFixed(2);
+  const [strEntero, strDecimal] = valorFijo.split('.');
+  
+  const entero = parseInt(strEntero, 10);
+  const decimal = parseInt(strDecimal, 10);
+  
+  let resultado = convertirParteEntera(entero);
+  
+  if (decimal > 0) {
+    resultado += ' CON ' + convertirParteEntera(decimal);
+  }
+  
+  return resultado.trim();
+}
+
 function obtenerNombreMes(numeroMes) {
   const meses = [
     'ENERO', 'FEBRERO', 'MARZO', 'ABRIL', 'MAYO', 'JUNIO',
     'JULIO', 'AGOSTO', 'SEPTIEMBRE', 'OCTUBRE', 'NOVIEMBRE', 'DICIEMBRE'
   ];
-  return meses[parseInt(numeroMes, 10) - 1] || '__________';
+  return meses[numeroMes] || '__________';
 }
 
 function cuotasALetras(num) {
@@ -115,7 +130,6 @@ function App() {
     if (file && (file.name.endsWith('.xlsx') || file.name.endsWith('.xls'))) {
       setArchivoExcel(file);
       
-      // Leer rápido el número de filas para mostrar en la interfaz
       const reader = new FileReader();
       reader.onload = (e) => {
         const data = new Uint8Array(e.target.result);
@@ -125,7 +139,6 @@ function App() {
         setTotalFilas(datos.length);
       };
       reader.readAsArrayBuffer(file);
-
     } else {
       alert('Por favor, sube un archivo Excel válido (.xlsx o .xls)');
     }
@@ -144,17 +157,23 @@ function App() {
 
       if (datosExcel.length === 0) throw new Error('Excel vacío');
 
-      // Traer la plantilla base una sola vez para ahorrar consumo de red
       const respuestaPlantilla = await fetch('/plantilla.docx');
       if (!respuestaPlantilla.ok) throw new Error('Plantilla no encontrada');
       const arrayBufferPlantilla = await respuestaPlantilla.arrayBuffer();
 
-      // RECORREMOS CADA FILA DEL EXCEL (PROCESAMIENTO MASIVO)
+      // CAPTURAMOS LA FECHA ACTUAL DE HOY
+      const hoy = new Date();
+      const diaHoy = hoy.getDate() < 10 ? `0${hoy.getDate()}` : `${hoy.getDate()}`;
+      const mesHoyNum = (hoy.getMonth() + 1) < 10 ? `0${hoy.getMonth() + 1}` : `${hoy.getMonth() + 1}`;
+      const anioHoy = hoy.getFullYear();
+      const mesHoyStr = obtenerNombreMes(hoy.getMonth());
+      const fechaHoyFormateada = `${diaHoy}/${mesHoyNum}/${anioHoy}`;
+
       for (const fila of datosExcel) {
         const datosParaWord = { ...fila };
         const dniCliente = datosParaWord['N°_DOCUMENTO'] || 'Sin_DNI';
 
-        // 1. Procesar Fechas por cada fila
+        // 1. FECHA ORIGINAL DEL EXCEL (Para la etiqueta {FECHA_SOLICITUD} de arriba)
         if (datosParaWord['FECHA_SOLICITUD']) {
           const fechaCruda = datosParaWord['FECHA_SOLICITUD'].toString().trim();
           const soloFecha = fechaCruda.substring(0, 10); 
@@ -162,28 +181,41 @@ function App() {
           if (soloFecha.includes('-')) {
             const [anio, mes, dia] = soloFecha.split('-');
             datosParaWord['FECHA_SOLICITUD'] = `${dia}/${mes}/${anio}`;
-            datosParaWord['DIA_SOLICITUD'] = dia;
-            datosParaWord['MES_SOLICITUD'] = obtenerNombreMes(mes);
           } else {
             datosParaWord['FECHA_SOLICITUD'] = soloFecha;
-            datosParaWord['DIA_SOLICITUD'] = '__';
-            datosParaWord['MES_SOLICITUD'] = '_____';
           }
         }
 
-        // 2. Formatear Cuotas por cada fila
+        // 2. FECHA DE HOY (Para las etiquetas de abajo: {DIA_SOLICITUD}, {MES_SOLICITUD} y {FECHA_HOY})
+        datosParaWord['FECHA_HOY'] = fechaHoyFormateada;
+        datosParaWord['DIA_SOLICITUD'] = diaHoy;
+        datosParaWord['MES_SOLICITUD'] = mesHoyStr;
+
+        // 3. Formatear N° de Cuotas
         const numCuotas = parseInt(datosParaWord['CUOTAS N°'], 10) || 0;
         datosParaWord['CUOTAS_NUM_FORMATO'] = numCuotas < 10 ? `0${numCuotas}` : `${numCuotas}`;
         datosParaWord['CUOTAS_LETRAS'] = cuotasALetras(numCuotas);
 
-        // 3. Convertir Montos Numéricos a Letras por cada fila
-        const montoTotal = parseFloat(datosParaWord['TOTAL_CONVENIOS']) || 0;
+        // 4. Mapeo de montos en letras
+        const montoTotal = parseFloat(datosParaWord['MONTO APROBADO']) || 0;
         const montoCuota = parseFloat(datosParaWord['VALOR CUOTA']) || 0;
 
         datosParaWord['MONTO_LETRAS'] = numeroALetras(montoTotal);
         datosParaWord['CUOTA_LETRAS'] = numeroALetras(montoCuota);
 
-        // Generar el empaquetado del Word individual
+        // 5. FIX TASA DE INTERÉS: Buscador inteligente para forzar 2 decimales
+        const tasaKey = Object.keys(datosParaWord).find(k => k.toLowerCase().includes('tasa') && k.toLowerCase().includes('compensatoria'));
+        
+        if (tasaKey) {
+          let tasaVal = datosParaWord[tasaKey].toString();
+          let num = parseFloat(tasaVal); // Extrae solo el número
+          if (!isNaN(num)) {
+            // Le forzamos los 2 decimales. Si tenía "%", se lo devolvemos.
+            datosParaWord[tasaKey] = tasaVal.includes('%') ? `${num.toFixed(2)}%` : num.toFixed(2);
+          }
+        }
+
+        // Construcción del documento individual
         const zip = new PizZip(arrayBufferPlantilla.slice(0)); 
         const doc = new Docxtemplater(zip, { paragraphLoop: true, linebreaks: true });
 
@@ -193,7 +225,6 @@ function App() {
           mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' 
         });
 
-        // DESCARGA AUTOMÁTICA DIFERENCIADA POR DNI
         saveAs(out, `Hoja_Resumen_DNI_${dniCliente}.docx`);
       }
 
@@ -222,29 +253,28 @@ function App() {
         )}
       </button>
 
-      <div className="absolute top-0 left-1/4 w-96 h-96 bg-indigo-500/10 dark:bg-indigo-500/20 rounded-full blur-[128px] pointer-events-none transition-colors duration-500" />
-      <div className="absolute bottom-0 right-1/4 w-96 h-96 bg-emerald-500/10 rounded-full blur-[128px] pointer-events-none transition-colors duration-500" />
+      <div className="absolute top-0 left-1/4 w-96 h-96 bg-indigo-500/10 dark:bg-indigo-500/20 rounded-full blur-[128px] pointer-events-none" />
+      <div className="absolute bottom-0 right-1/4 w-96 h-96 bg-emerald-500/10 rounded-full blur-[128px] pointer-events-none" />
 
-      <div className="bg-white dark:bg-slate-900/60 backdrop-blur-xl p-14 rounded-3xl shadow-xl dark:shadow-[0_35px_100px_-15px_rgba(0,0,0,0.3)] max-w-xl w-full border border-slate-200 dark:border-slate-800 transition-all duration-500 ease-out hover:border-indigo-400/50 dark:hover:border-indigo-500/30 hover:scale-[1.01] hover:-translate-y-1 relative group z-10">
+      <div className="bg-white dark:bg-slate-900/60 backdrop-blur-xl p-14 rounded-3xl shadow-xl max-w-xl w-full border border-slate-200 dark:border-slate-800 transition-all duration-500 ease-out hover:scale-[1.01] relative group z-10">
         <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-indigo-500 via-purple-500 to-emerald-500 rounded-t-3xl" />
         
         <div className="text-center mb-12">
-          <div className="inline-flex items-center justify-center w-22 h-22 rounded-2xl bg-indigo-50 dark:bg-slate-800 border border-indigo-100 dark:border-slate-700 shadow-md mb-8 relative overflow-hidden group-hover:border-indigo-500 transition-colors">
-            <div className="absolute inset-0 bg-gradient-to-br from-indigo-600 to-purple-600 opacity-0 group-hover:opacity-10 transition-opacity" />
+          <div className="inline-flex items-center justify-center w-22 h-22 rounded-2xl bg-indigo-50 dark:bg-slate-800 border border-indigo-100 dark:border-slate-700 shadow-md mb-8">
             <svg className="w-11 h-11 text-indigo-600 dark:text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
             </svg>
           </div>
-          <h1 className="text-4xl font-extrabold text-slate-800 dark:text-white tracking-tighter leading-tight transition-colors">
-            De excel a word masivo
+          <h1 className="text-4xl font-extrabold text-slate-800 dark:text-white tracking-tighter leading-tight">
+            De Excel a Word en un clic ⛄
           </h1>
-          <p className="text-slate-600 dark:text-slate-400 mt-4 text-lg max-w-sm mx-auto font-medium leading-relaxed transition-colors">
-            Sube un Excel con múltiples filas. El sistema generará un Word independiente por cada cliente.
+          <p className="text-slate-600 dark:text-slate-400 mt-4 text-lg max-w-sm mx-auto font-medium">
+            Sube tu Excel. Cada fila exportará un Word independiente leyendo dinámicamente el Monto Aprobado de cada fila.
           </p>
         </div>
         
         <div 
-          className="mb-12 relative group/drop"
+          className="mb-12 relative"
           onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
           onDragLeave={() => setDragOver(false)}
           onDrop={(e) => { e.preventDefault(); manejarSubida(e); }}
@@ -254,34 +284,32 @@ function App() {
               ? 'bg-emerald-50 dark:bg-emerald-950/30 border-2 border-emerald-400 dark:border-emerald-500/50 shadow-sm' 
               : dragOver
                 ? 'bg-indigo-50 dark:bg-indigo-950/50 border-2 border-indigo-400 border-dashed'
-                : 'bg-slate-50 dark:bg-slate-800/40 border border-slate-300 dark:border-slate-700 hover:border-indigo-400 dark:hover:border-indigo-500 hover:bg-slate-100 dark:hover:bg-slate-800/80'}`}>
+                : 'bg-slate-50 dark:bg-slate-800/40 border border-slate-300 dark:border-slate-700 hover:border-indigo-400 dark:hover:border-indigo-500'}`}>
             
-            <div className="flex flex-col items-center justify-center pt-8 pb-10 px-6 text-center z-10 relative">
+            <div className="flex flex-col items-center justify-center pt-8 pb-10 px-6 text-center z-10">
               {archivoExcel ? (
                 <>
                   <div className="w-18 h-18 bg-emerald-100 dark:bg-emerald-500/10 rounded-full flex items-center justify-center mb-5 border border-emerald-200 dark:border-emerald-500/30">
-                    <svg className="w-9 h-9 text-emerald-600 dark:text-emerald-400 animate-[pulse_2s_infinite]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg className="w-9 h-9 text-emerald-600 dark:text-emerald-400 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                     </svg>
                   </div>
-                  <p className="mb-2 text-base text-slate-800 dark:text-white font-bold tracking-tight truncate max-w-xs">{archivoExcel.name}</p>
+                  <p className="mb-2 text-base text-slate-800 dark:text-white font-bold truncate max-w-xs">{archivoExcel.name}</p>
                   <p className="text-sm text-emerald-700 dark:text-emerald-300 font-bold bg-emerald-100 dark:bg-emerald-950 px-4 py-1.5 rounded-full border border-emerald-200 dark:border-emerald-500/30">
                     {totalFilas} {totalFilas === 1 ? 'cliente detectado' : 'clientes detectados'}
                   </p>
                 </>
               ) : (
                 <>
-                  <div className={`w-18 h-18 rounded-full flex items-center justify-center mb-5 transition-all duration-300 border 
-                    ${dragOver ? 'bg-indigo-100 dark:bg-indigo-500/20 border-indigo-300 dark:border-indigo-400 animate-pulse' : 'bg-white dark:bg-slate-700 border-slate-200 dark:border-slate-600 shadow-sm'}`}>
-                    <svg className={`w-9 h-9 transition-colors ${dragOver ? 'text-indigo-500 dark:text-indigo-300' : 'text-slate-400 dark:text-slate-400 group-hover:text-indigo-500 dark:group-hover:text-indigo-400'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <div className={`w-18 h-18 rounded-full flex items-center justify-center mb-5 border ${dragOver ? 'bg-indigo-100 dark:bg-indigo-500/20' : 'bg-white dark:bg-slate-700'}`}>
+                    <svg className="w-9 h-9 text-slate-400 group-hover:text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M12 11v6m3-3l-3 3-3-3" className="animate-[bounce_1.5s_infinite]"/>
                     </svg>
                   </div>
-                  <p className="mb-2 text-base text-slate-600 dark:text-slate-300 font-medium leading-relaxed">
-                    {dragOver ? '¡Suéltalo aquí!' : <><span className="font-bold text-indigo-600 dark:text-indigo-400">Haz clic para subir</span> o arrastra el archivo</>}
+                  <p className="mb-2 text-base text-slate-600 dark:text-slate-300 font-medium">
+                    Haz clic para subir o arrastra el archivo
                   </p>
-                  <p className="text-sm text-slate-400 dark:text-slate-500 font-medium">Soporta formatos .xlsx y .xls</p>
+                  <p className="text-sm text-slate-400 font-medium">Soporta .xlsx y .xls</p>
                 </>
               )}
             </div>
@@ -295,7 +323,7 @@ function App() {
           className={`group/btn relative w-full py-4.5 px-7 rounded-2xl font-extrabold text-base uppercase tracking-widest transition-all duration-300 overflow-hidden flex justify-center items-center gap-3.5
             ${!archivoExcel || cargando 
               ? 'bg-slate-200 dark:bg-slate-800 cursor-not-allowed text-slate-500 dark:text-slate-400 border border-slate-300 dark:border-slate-700' 
-              : 'bg-gradient-to-r from-indigo-600 via-indigo-500 to-indigo-600 text-white bg-[length:200%_auto] hover:bg-right shadow-lg hover:shadow-xl transform hover:-translate-y-0.5 active:translate-y-0 animate-[pulse_3s_infinite]'
+              : 'bg-gradient-to-r from-indigo-600 via-indigo-500 to-indigo-600 text-white shadow-lg transform hover:-translate-y-0.5 active:translate-y-0'
             }`}
         >
           {cargando ? (
@@ -311,19 +339,13 @@ function App() {
           ) : (
             'Esperando fuente de datos'
           )}
-          <div className="absolute top-0 -inset-full h-full w-1/2 block transform -skew-x-12 bg-gradient-to-r from-transparent to-white opacity-20 group-hover/btn:animate-shine" />
         </button>
       </div>
 
-      <div className="mt-18 text-center text-base text-slate-500 dark:text-slate-600 font-semibold tracking-wide border-t border-slate-200 dark:border-slate-800 pt-8 max-w-sm mx-auto transition-colors">
-        SMART CASH TOOL
-        <span className="text-slate-400 dark:text-slate-700 block text-sm mt-1.5">v2.0 | Exportación Masiva Habilitada</span>
+      <div className="mt-18 text-center text-base text-slate-500 font-semibold tracking-wide border-t border-slate-200 dark:border-slate-800 pt-8 max-w-sm mx-auto">
+        SMART CASH HERRAMIENTA
+        <span className="text-slate-400 dark:text-slate-700 block text-sm mt-1.5">Desarrollado por Smart Cash y Nicolas</span>
       </div>
-
-      <style>{`
-        @keyframes shine { 100% { left: 125%; } }
-        .animate-shine { animation: shine 1s; }
-      `}</style>
     </div>
   );
 }
