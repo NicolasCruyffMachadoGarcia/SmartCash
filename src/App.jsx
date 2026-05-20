@@ -26,7 +26,7 @@ function obtenerRUC(nombreEmpresa) {
       return ruc;
     }
   }
-  return '__________'; // Si no encuentra la empresa, deja el espacio en blanco
+  return '__________';
 }
 
 // FUNCIÓN AUXILIAR PARA CONVERTIR PARTE ENTERA A LETRAS
@@ -197,20 +197,9 @@ function App() {
         const datosParaWord = { ...fila };
         const dniCliente = datosParaWord['N°_DOCUMENTO'] || 'Sin_DNI';
 
-        // 1. FECHAS DE HOY Y DEL EXCEL SEPARADAS CORRECTAMENTE
-        if (datosParaWord['FECHA_SOLICITUD']) {
-          const fechaCruda = datosParaWord['FECHA_SOLICITUD'].toString().trim();
-          const soloFecha = fechaCruda.substring(0, 10); 
-          
-          if (soloFecha.includes('-')) {
-            const [anio, mes, dia] = soloFecha.split('-');
-            datosParaWord['FECHA_SOLICITUD'] = `${dia}/${mes}/${anio}`;
-          } else {
-            datosParaWord['FECHA_SOLICITUD'] = soloFecha;
-          }
-        }
-
-        datosParaWord['FECHA_HOY'] = fechaHoyFormateada;
+        // 1. FORZAMOS A QUE TODAS LAS ETIQUETAS DE FECHA SEAN LA DE HOY (Ignoramos el Excel)
+        datosParaWord['FECHA_SOLICITUD'] = fechaHoyFormateada; // La de arriba en el Word
+        datosParaWord['FECHA_HOY'] = fechaHoyFormateada;       // La de abajo en el Word
         datosParaWord['DIA_SOLICITUD'] = diaHoy;
         datosParaWord['MES_SOLICITUD'] = mesHoyStr;
 
@@ -244,8 +233,7 @@ function App() {
           }
         }
 
-        // 5. NUEVO: OBTENER RUC DE LA EMPRESA
-        // (Asume que la columna del nombre de empresa en tu Excel se llama "EMPRESA")
+        // 5. OBTENER RUC DE LA EMPRESA
         datosParaWord['RUC_EMPRESA'] = obtenerRUC(datosParaWord['EMPRESA']);
 
         // Construcción del documento individual
@@ -258,7 +246,8 @@ function App() {
           mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' 
         });
 
-        saveAs(out, `Hoja_Resumen_DNI_${dniCliente}.docx`);
+        // 6. NUEVO NOMBRE DEL ARCHIVO WORD EXPORTADO
+        saveAs(out, `contrato de crédito ${dniCliente}.docx`);
       }
 
     } catch (error) {
