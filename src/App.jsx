@@ -105,23 +105,14 @@ function convertirParteEntera(entero) {
   return (strMiles + strCentenas).trim();
 }
 
-// FUNCIÓN PRINCIPAL PARA MONTOS CON DECIMALES
+// NUEVA FUNCIÓN: SOLO DEVUELVE LA PARTE ENTERA EN LETRAS (Sin los decimales)
 function numeroALetras(num) {
   if (num === undefined || num === null) return '';
-  
   const valorFijo = (Math.round(num * 100) / 100).toFixed(2);
-  const [strEntero, strDecimal] = valorFijo.split('.');
-  
+  const [strEntero] = valorFijo.split('.');
   const entero = parseInt(strEntero, 10);
-  const decimal = parseInt(strDecimal, 10);
   
-  let resultado = convertirParteEntera(entero);
-  
-  if (decimal > 0) {
-    resultado += ' CON ' + convertirParteEntera(decimal);
-  }
-  
-  return resultado.trim();
+  return convertirParteEntera(entero).trim();
 }
 
 function obtenerNombreMes(numeroMes) {
@@ -197,25 +188,36 @@ function App() {
         const datosParaWord = { ...fila };
         const dniCliente = datosParaWord['N°_DOCUMENTO'] || 'Sin_DNI';
 
-        // 1. FORZAMOS A QUE TODAS LAS ETIQUETAS DE FECHA SEAN LA DE HOY (Ignoramos el Excel)
-        datosParaWord['FECHA_SOLICITUD'] = fechaHoyFormateada; // La de arriba en el Word
-        datosParaWord['FECHA_HOY'] = fechaHoyFormateada;       // La de abajo en el Word
+        if (datosParaWord['FECHA_SOLICITUD']) {
+          const fechaCruda = datosParaWord['FECHA_SOLICITUD'].toString().trim();
+          const soloFecha = fechaCruda.substring(0, 10); 
+          if (soloFecha.includes('-')) {
+            const [anio, mes, dia] = soloFecha.split('-');
+            datosParaWord['FECHA_SOLICITUD'] = `${dia}/${mes}/${anio}`;
+          } else {
+            datosParaWord['FECHA_SOLICITUD'] = soloFecha;
+          }
+        }
+
+        datosParaWord['FECHA_HOY'] = fechaHoyFormateada;
         datosParaWord['DIA_SOLICITUD'] = diaHoy;
         datosParaWord['MES_SOLICITUD'] = mesHoyStr;
 
-        // 2. Formatear N° de Cuotas
         const numCuotas = parseInt(datosParaWord['CUOTAS N°'], 10) || 0;
         datosParaWord['CUOTAS_NUM_FORMATO'] = numCuotas < 10 ? `0${numCuotas}` : `${numCuotas}`;
         datosParaWord['CUOTAS_LETRAS'] = cuotasALetras(numCuotas);
 
-        // 3. Mapeo de montos en letras
+        // MAPEO DE MONTOS (Letras enteras + Decimales separados)
         const montoTotal = parseFloat(datosParaWord['MONTO APROBADO']) || 0;
         const montoCuota = parseFloat(datosParaWord['VALOR CUOTA']) || 0;
 
         datosParaWord['MONTO_LETRAS'] = numeroALetras(montoTotal);
-        datosParaWord['CUOTA_LETRAS'] = numeroALetras(montoCuota);
+        // Extraemos solo los dos dígitos decimales (ej: "55" o "00")
+        datosParaWord['MONTO_DECIMAL'] = (Math.round(montoTotal * 100) / 100).toFixed(2).split('.')[1];
 
-        // 4. FIX TASA DE INTERÉS
+        datosParaWord['CUOTA_LETRAS'] = numeroALetras(montoCuota);
+        datosParaWord['CUOTA_DECIMAL'] = (Math.round(montoCuota * 100) / 100).toFixed(2).split('.')[1];
+
         for (const key of Object.keys(datosParaWord)) {
           const keyLower = key.toLowerCase();
           if (keyLower.includes('tasa') || keyLower.includes('interes') || keyLower.includes('interés') || keyLower.includes('tea')) {
@@ -224,7 +226,6 @@ function App() {
               let valorStr = valor.toString().trim();
               let tienePorcentaje = valorStr.includes('%');
               let num = parseFloat(valorStr);
-              
               if (!isNaN(num)) {
                 let valorFormateado = num.toFixed(2);
                 datosParaWord[key] = tienePorcentaje ? `${valorFormateado}%` : valorFormateado;
@@ -233,10 +234,8 @@ function App() {
           }
         }
 
-        // 5. OBTENER RUC DE LA EMPRESA
         datosParaWord['RUC_EMPRESA'] = obtenerRUC(datosParaWord['EMPRESA']);
 
-        // Construcción del documento individual
         const zip = new PizZip(arrayBufferPlantilla.slice(0)); 
         const doc = new Docxtemplater(zip, { paragraphLoop: true, linebreaks: true });
 
@@ -246,7 +245,6 @@ function App() {
           mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' 
         });
 
-        // 6. NUEVO NOMBRE DEL ARCHIVO WORD EXPORTADO
         saveAs(out, `contrato de crédito ${dniCliente}.docx`);
       }
 
