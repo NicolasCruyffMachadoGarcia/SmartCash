@@ -232,15 +232,22 @@ function App() {
 
         for (const key of Object.keys(datosParaWord)) {
           const keyLower = key.toLowerCase();
-          if (keyLower.includes('tasa') || keyLower.includes('interes') || keyLower.includes('interés') || keyLower.includes('tea')) {
+          
+          if (['tasa', 'interes', 'interés', 'tea'].some(kw => keyLower.includes(kw))) {
             let valor = datosParaWord[key];
+
             if (valor !== undefined && valor !== null) {
               let valorStr = valor.toString().trim();
-              let tienePorcentaje = valorStr.includes('%');
-              let num = parseFloat(valorStr);
+              let numStr = valorStr.replace(',', '.');
+              let num = parseFloat(numStr);
+
               if (!isNaN(num)) {
+                if (num <= 1 && num > 0) {
+                  num = num * 100;
+                }
+                
                 let valorFormateado = num.toFixed(2);
-                datosParaWord[key] = tienePorcentaje ? `${valorFormateado}%` : valorFormateado;
+                datosParaWord[key] = `${valorFormateado}`;
               }
             }
           }
