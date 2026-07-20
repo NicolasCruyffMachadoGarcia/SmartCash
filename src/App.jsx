@@ -186,7 +186,20 @@ function App() {
 
       for (const fila of datosExcel) {
         const datosParaWord = { ...fila };
-        const dniCliente = datosParaWord['N°_DOCUMENTO'] || 'Sin_DNI';
+        
+        // --- 1. ADAPTACIONES PARA EL NUEVO FORMATO ---
+        // Extraemos el correlativo (CORRELAT) para el nombre del archivo
+        const correlativo = datosParaWord['CORRELAT'] || datosParaWord['CORRELATIVO'] || '';
+        
+        // Si la columna cambió a NOMBRES_Y_APELLIDOS, la copiamos a NOMBRES 
+        // para que la plantilla de Word la detecte como antes.
+        if (datosParaWord['NOMBRES_Y_APELLIDOS']) {
+          datosParaWord['NOMBRES'] = datosParaWord['NOMBRES_Y_APELLIDOS'];
+        }
+        
+        // Flexibilidad en el DNI (a veces Excel trunca el encabezado a N°_DOCUN o N°_DOCU)
+        const dniCliente = datosParaWord['N°_DOCUMENTO'] || datosParaWord['N°_DOCUN'] || datosParaWord['N°_DOCU'] || 'Sin_DNI';
+        // ---------------------------------------------
 
         if (datosParaWord['FECHA_SOLICITUD']) {
           const fechaCruda = datosParaWord['FECHA_SOLICITUD'].toString().trim();
@@ -212,7 +225,6 @@ function App() {
         const montoCuota = parseFloat(datosParaWord['VALOR CUOTA']) || 0;
 
         datosParaWord['MONTO_LETRAS'] = numeroALetras(montoTotal);
-        // Extraemos solo los dos dígitos decimales (ej: "55" o "00")
         datosParaWord['MONTO_DECIMAL'] = (Math.round(montoTotal * 100) / 100).toFixed(2).split('.')[1];
 
         datosParaWord['CUOTA_LETRAS'] = numeroALetras(montoCuota);
@@ -245,7 +257,10 @@ function App() {
           mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' 
         });
 
-        saveAs(out, `contrato de crédito ${dniCliente}.docx`);
+        // --- 2. CAMBIO EN EL NOMBRE DEL ARCHIVO ---
+        // Agregamos el correlativo al inicio del nombre del archivo si es que existe
+        const prefijoCorrelativo = correlativo ? `${correlativo}_` : '';
+        saveAs(out, `${prefijoCorrelativo}contrato de crédito ${dniCliente}.docx`);
       }
 
     } catch (error) {
