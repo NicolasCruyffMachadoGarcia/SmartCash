@@ -13,11 +13,9 @@ const diccRUCs = {
   "ASISTENCIA 365 S.A.C.": "20565750730",
   "QTECH EXPERIENCE S.A.C.": "20613921045",
   "ACCION COMERCIAL 365 S.A.C.": "20614009021",
-  "RECUPERATE S.A.C.": "20606358882",
-  "SMART CASH S.A.C.": "20506760721"
+  "RECUPERATE S.A.C.": "20606358882"
 };
 
-// FUNCIÓN PARA BUSCAR EL RUC
 function obtenerRUC(nombreEmpresa) {
   if (!nombreEmpresa) return '__________';
   const nombreUpper = nombreEmpresa.toString().trim().toUpperCase();
@@ -30,7 +28,6 @@ function obtenerRUC(nombreEmpresa) {
   return '__________';
 }
 
-// FUNCIÓN AUXILIAR PARA CONVERTIR PARTE ENTERA A LETRAS
 function convertirParteEntera(entero) {
   const Unidades = (num) => {
     switch (num) {
@@ -106,21 +103,16 @@ function convertirParteEntera(entero) {
   return (strMiles + strCentenas).trim();
 }
 
-// NUEVA FUNCIÓN: SOLO DEVUELVE LA PARTE ENTERA EN LETRAS (Sin los decimales)
 function numeroALetras(num) {
   if (num === undefined || num === null) return '';
   const valorFijo = (Math.round(num * 100) / 100).toFixed(2);
   const [strEntero] = valorFijo.split('.');
   const entero = parseInt(strEntero, 10);
-  
   return convertirParteEntera(entero).trim();
 }
 
 function obtenerNombreMes(numeroMes) {
-  const meses = [
-    'ENERO', 'FEBRERO', 'MARZO', 'ABRIL', 'MAYO', 'JUNIO',
-    'JULIO', 'AGOSTO', 'SEPTIEMBRE', 'OCTUBRE', 'NOVIEMBRE', 'DICIEMBRE'
-  ];
+  const meses = ['ENERO', 'FEBRERO', 'MARZO', 'ABRIL', 'MAYO', 'JUNIO', 'JULIO', 'AGOSTO', 'SEPTIEMBRE', 'OCTUBRE', 'NOVIEMBRE', 'DICIEMBRE'];
   return meses[numeroMes] || '__________';
 }
 
@@ -186,22 +178,18 @@ function App() {
       const fechaHoyFormateada = `${diaHoy}/${mesHoyNum}/${anioHoy}`;
 
       for (const fila of datosExcel) {
+        // MATCH TOTAL: Pasamos TODA la fila del Excel directamente al Word
         const datosParaWord = { ...fila };
         
-        // --- 1. ADAPTACIONES PARA EL NUEVO FORMATO ---
-        // Extraemos el correlativo (CORRELAT) para el nombre del archivo
+        // Variables Base
         const correlativo = datosParaWord['CORRELAT'] || datosParaWord['CORRELATIVO'] || '';
-        
-        // Si la columna cambió a NOMBRES_Y_APELLIDOS, la copiamos a NOMBRES 
-        // para que la plantilla de Word la detecte como antes.
-        if (datosParaWord['NOMBRES_Y_APELLIDOS']) {
-          datosParaWord['NOMBRES'] = datosParaWord['NOMBRES_Y_APELLIDOS'];
-        }
-        
-        // Flexibilidad en el DNI (a veces Excel trunca el encabezado a N°_DOCUN o N°_DOCU)
         const dniCliente = datosParaWord['N°_DOCUMENTO'] || datosParaWord['N°_DOCUN'] || datosParaWord['N°_DOCU'] || 'Sin_DNI';
-        // ---------------------------------------------
+        
+        // Match de Nombres y Empresa
+        if (datosParaWord['NOMBRES_Y_APELLIDOS']) datosParaWord['NOMBRES'] = datosParaWord['NOMBRES_Y_APELLIDOS'];
+        datosParaWord['RUC_EMPRESA'] = obtenerRUC(datosParaWord['EMPRESA']);
 
+        // Fechas
         if (datosParaWord['FECHA_SOLICITUD']) {
           const fechaCruda = datosParaWord['FECHA_SOLICITUD'].toString().trim();
           const soloFecha = fechaCruda.substring(0, 10); 
@@ -212,52 +200,58 @@ function App() {
             datosParaWord['FECHA_SOLICITUD'] = soloFecha;
           }
         }
-
         datosParaWord['FECHA_HOY'] = fechaHoyFormateada;
         datosParaWord['DIA_SOLICITUD'] = diaHoy;
         datosParaWord['MES_SOLICITUD'] = mesHoyStr;
 
+        // Variables Numéricas adaptadas a las llaves más comunes
         const numCuotas = parseInt(datosParaWord['CUOTAS N°'], 10) || 0;
+        datosParaWord['PLAZO'] = numCuotas; // Clon para {PLAZO}
         datosParaWord['CUOTAS_NUM_FORMATO'] = numCuotas < 10 ? `0${numCuotas}` : `${numCuotas}`;
         datosParaWord['CUOTAS_LETRAS'] = cuotasALetras(numCuotas);
 
-        // MAPEO DE MONTOS (Letras enteras + Decimales separados)
-        const montoTotal = parseFloat(datosParaWord['MONTO APROBADO']) || 0;
+        const montoTotal = parseFloat(datosParaWord['MONTO APROBADO']) || parseFloat(datosParaWord['MONTO']) || 0;
         const montoCuota = parseFloat(datosParaWord['VALOR CUOTA']) || 0;
 
+        datosParaWord['MONTO'] = montoTotal.toFixed(2); // Clon por si usan {MONTO}
         datosParaWord['MONTO_LETRAS'] = numeroALetras(montoTotal);
         datosParaWord['MONTO_DECIMAL'] = (Math.round(montoTotal * 100) / 100).toFixed(2).split('.')[1];
 
         datosParaWord['CUOTA_LETRAS'] = numeroALetras(montoCuota);
         datosParaWord['CUOTA_DECIMAL'] = (Math.round(montoCuota * 100) / 100).toFixed(2).split('.')[1];
 
+        // Match Automático de Tasas y Porcentajes
         for (const key of Object.keys(datosParaWord)) {
           const keyLower = key.toLowerCase();
-          
-          if (['tasa', 'interes', 'interés', 'tea'].some(kw => keyLower.includes(kw))) {
+          if (['tasa', 'interes', 'interés', 'tea', 'tcea'].some(kw => keyLower.includes(kw))) {
             let valor = datosParaWord[key];
-
             if (valor !== undefined && valor !== null) {
-              let valorStr = valor.toString().trim();
-              let numStr = valorStr.replace(',', '.');
+              let numStr = valor.toString().trim().replace(',', '.');
               let num = parseFloat(numStr);
-
               if (!isNaN(num)) {
-                if (num <= 1 && num > 0) {
-                  num = num * 100;
-                }
+                if (num <= 1 && num > 0) num = num * 100; // Convierte 0.11 a 11.00
+                datosParaWord[key] = num.toFixed(2);
                 
-                let valorFormateado = num.toFixed(2);
-                datosParaWord[key] = `${valorFormateado}`;
+                // Si el Excel solo tiene "TASA", creamos las variables TEA y TCEA para el Word
+                if (keyLower.includes('tasa')) {
+                    datosParaWord['TEA'] = num.toFixed(2);
+                    datosParaWord['TCEA'] = num.toFixed(2);
+                }
               }
             }
           }
         }
 
-        datosParaWord['RUC_EMPRESA'] = obtenerRUC(datosParaWord['EMPRESA']);
-
         const zip = new PizZip(arrayBufferPlantilla.slice(0)); 
-        const doc = new Docxtemplater(zip, { paragraphLoop: true, linebreaks: true });
+        
+        // EL ESCUDO ANTI-UNDEFINED: nullGetter le dice a docxtemplater que deje en blanco lo que no encuentre.
+        const doc = new Docxtemplater(zip, { 
+          paragraphLoop: true, 
+          linebreaks: true,
+          nullGetter: function(part) {
+            return ""; // En lugar de imprimir "undefined", imprime nada.
+          }
+        });
 
         doc.render(datosParaWord);
         const out = doc.getZip().generate({ 
@@ -265,8 +259,6 @@ function App() {
           mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' 
         });
 
-        // --- 2. CAMBIO EN EL NOMBRE DEL ARCHIVO ---
-        // Agregamos el correlativo al inicio del nombre del archivo si es que existe
         const prefijoCorrelativo = correlativo ? `${correlativo}_` : '';
         saveAs(out, `${prefijoCorrelativo}contrato de crédito ${dniCliente}.docx`);
       }
@@ -312,7 +304,7 @@ function App() {
             De Excel a Word en un click 
           </h1>
           <p className="text-slate-600 dark:text-slate-400 mt-4 text-lg max-w-sm mx-auto font-medium">
-            Sube tu Excel. Cada fila exportará un Word independiente leyendo dinámicamente el Monto Aprobado de cada fila.
+            Sube tu Excel. Cada fila exportará un Word independiente leyendo dinámicamente los datos.
           </p>
         </div>
         
@@ -387,7 +379,7 @@ function App() {
 
       <div className="mt-18 text-center text-base text-slate-500 font-semibold tracking-wide border-t border-slate-200 dark:border-slate-800 pt-8 max-w-sm mx-auto">
         SMART CASH HERRAMIENTA
-        <span className="text-slate-400 dark:text-slate-700 block text-sm mt-1.5">Desarrollado por Smart Cash y Nicolas</span>
+        <span className="text-slate-400 dark:text-slate-700 block text-sm mt-1.5">Desarrollado por Smart Cash </span>
       </div>
     </div>
   );
