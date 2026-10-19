@@ -301,7 +301,7 @@ function App() {
             </svg>
           </div>
           <h1 className="text-4xl font-extrabold text-slate-800 dark:text-white tracking-tighter leading-tight">
-            De Excel a Word en un click 
+            De Excel a Word en un click. 
           </h1>
           <p className="text-slate-600 dark:text-slate-400 mt-4 text-lg max-w-sm mx-auto font-medium">
             Sube tu Excel. Cada fila exportará un Word independiente leyendo dinámicamente los datos.
