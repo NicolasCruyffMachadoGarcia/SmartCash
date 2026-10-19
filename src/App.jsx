@@ -16,6 +16,27 @@ const diccRUCs = {
   "RECUPERATE S.A.C.": "20606358882"
 };
 
+// GRATIFICACIÓN: el botón "Contrato + Gratificación" solo está disponible hasta esta fecha (inclusive).
+// Para extender el plazo o reactivarlo el próximo año, cambia solo esta línea.
+const GRATIFICACION_HASTA = new Date(2026, 11, 31, 23, 59, 59); // 31/12/2026
+const gratificacionActiva = () => new Date() <= GRATIFICACION_HASTA;
+
+// Renderiza una plantilla .docx con los datos de una fila
+function renderizarDocx(arrayBufferPlantilla, datos, tipo = 'blob') {
+  const zip = new PizZip(arrayBufferPlantilla.slice(0));
+  // nullGetter: deja en blanco lo que no encuentre, en vez de imprimir "undefined"
+  const doc = new Docxtemplater(zip, {
+    paragraphLoop: true,
+    linebreaks: true,
+    nullGetter: () => ''
+  });
+  doc.render(datos);
+  return doc.getZip().generate({
+    type: tipo,
+    mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+  });
+}
+
 function obtenerRUC(nombreEmpresa) {
   if (!nombreEmpresa) return '__________';
   const nombreUpper = nombreEmpresa.toString().trim().toUpperCase();
@@ -128,6 +149,7 @@ function App() {
   const [dragOver, setDragOver] = useState(false);
   const [darkMode, setDarkMode] = useState(false);
   const [totalFilas, setTotalFilas] = useState(0);
+  const mostrarGratificacion = gratificacionActiva();
 
   useEffect(() => {
     if (darkMode) document.documentElement.classList.add('dark');
@@ -154,8 +176,12 @@ function App() {
     setDragOver(false);
   };
 
-  const generarDocumentosMasivos = async () => {
+  const generarDocumentosMasivos = async (incluirGratificacion = false) => {
     if (!archivoExcel) return;
+    if (incluirGratificacion && !gratificacionActiva()) {
+      alert('El periodo de gratificación ya terminó.');
+      return;
+    }
     setCargando(true);
 
     try {
@@ -169,6 +195,16 @@ function App() {
       const respuestaPlantilla = await fetch('/plantilla.docx');
       if (!respuestaPlantilla.ok) throw new Error('Plantilla no encontrada');
       const arrayBufferPlantilla = await respuestaPlantilla.arrayBuffer();
+
+      // Solo en modo "Contrato + Gratificación": se carga la 2da plantilla y se arma un ZIP
+      let arrayBufferGratificacion = null;
+      let zipFinal = null;
+      if (incluirGratificacion) {
+        const respuestaGrat = await fetch('/plantilla_gratificacion.docx');
+        if (!respuestaGrat.ok) throw new Error('Plantilla de gratificación no encontrada');
+        arrayBufferGratificacion = await respuestaGrat.arrayBuffer();
+        zipFinal = new PizZip();
+      }
 
       const hoy = new Date();
       const diaHoy = hoy.getDate() < 10 ? `0${hoy.getDate()}` : `${hoy.getDate()}`;
@@ -185,6 +221,9 @@ function App() {
         const correlativo = datosParaWord['CORRELAT'] || datosParaWord['CORRELATIVO'] || '';
         const dniCliente = datosParaWord['N°_DOCUMENTO'] || datosParaWord['N°_DOCUN'] || datosParaWord['N°_DOCU'] || 'Sin_DNI';
         
+        // Clave limpia {DNI} para la plantilla de gratificación (no pisa una columna DNI si ya existe)
+        if (!datosParaWord['DNI']) datosParaWord['DNI'] = dniCliente;
+
         // Match de Nombres y Empresa
         if (datosParaWord['NOMBRES_Y_APELLIDOS']) datosParaWord['NOMBRES'] = datosParaWord['NOMBRES_Y_APELLIDOS'];
         datosParaWord['RUC_EMPRESA'] = obtenerRUC(datosParaWord['EMPRESA']);
@@ -242,25 +281,23 @@ function App() {
           }
         }
 
-        const zip = new PizZip(arrayBufferPlantilla.slice(0)); 
-        
-        // EL ESCUDO ANTI-UNDEFINED: nullGetter le dice a docxtemplater que deje en blanco lo que no encuentre.
-        const doc = new Docxtemplater(zip, { 
-          paragraphLoop: true, 
-          linebreaks: true,
-          nullGetter: function(part) {
-            return ""; // En lugar de imprimir "undefined", imprime nada.
-          }
-        });
-
-        doc.render(datosParaWord);
-        const out = doc.getZip().generate({ 
-          type: 'blob', 
-          mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' 
-        });
-
         const prefijoCorrelativo = correlativo ? `${correlativo}_` : '';
-        saveAs(out, `${prefijoCorrelativo}contrato de crédito ${dniCliente}.docx`);
+        const nombreContrato = `${prefijoCorrelativo}contrato de crédito ${dniCliente}.docx`;
+
+        if (incluirGratificacion) {
+          zipFinal.file(nombreContrato, renderizarDocx(arrayBufferPlantilla, datosParaWord, 'uint8array'));
+          zipFinal.file(
+            `${prefijoCorrelativo}autorización gratificación ${dniCliente}.docx`,
+            renderizarDocx(arrayBufferGratificacion, datosParaWord, 'uint8array')
+          );
+        } else {
+          saveAs(renderizarDocx(arrayBufferPlantilla, datosParaWord, 'blob'), nombreContrato);
+        }
+      }
+
+      if (incluirGratificacion) {
+        const blobZip = zipFinal.generate({ type: 'blob', compression: 'DEFLATE' });
+        saveAs(blobZip, `contratos_con_gratificacion_${fechaHoyFormateada.replace(/\//g, '-')}.zip`);
       }
 
     } catch (error) {
@@ -353,7 +390,7 @@ function App() {
         </div>
 
         <button
-          onClick={generarDocumentosMasivos}
+          onClick={() => generarDocumentosMasivos(false)}
           disabled={!archivoExcel || cargando}
           className={`group/btn relative w-full py-4.5 px-7 rounded-2xl font-extrabold text-base uppercase tracking-widest transition-all duration-300 overflow-hidden flex justify-center items-center gap-3.5
             ${!archivoExcel || cargando 
@@ -375,6 +412,25 @@ function App() {
             'Esperando fuente de datos'
           )}
         </button>
+
+        {mostrarGratificacion && (
+          <>
+            <button
+              onClick={() => generarDocumentosMasivos(true)}
+              disabled={!archivoExcel || cargando}
+              className={`mt-4 w-full py-4 px-7 rounded-2xl font-extrabold text-sm uppercase tracking-widest transition-all duration-300 flex justify-center items-center
+                ${!archivoExcel || cargando
+                  ? 'bg-slate-200 dark:bg-slate-800 cursor-not-allowed text-slate-500 dark:text-slate-400 border border-slate-300 dark:border-slate-700'
+                  : 'bg-gradient-to-r from-emerald-600 via-emerald-500 to-emerald-600 text-white shadow-lg transform hover:-translate-y-0.5 active:translate-y-0'
+                }`}
+            >
+              {archivoExcel ? `Contrato + Gratificación (${totalFilas})` : 'Contrato + Gratificación'}
+            </button>
+            <p className="mt-2 text-center text-xs text-slate-400 font-medium">
+              Genera ambos documentos por cliente en un .zip · Disponible hasta el 31/12/2026
+            </p>
+          </>
+        )}
       </div>
 
       <div className="mt-18 text-center text-base text-slate-500 font-semibold tracking-wide border-t border-slate-200 dark:border-slate-800 pt-8 max-w-sm mx-auto">
