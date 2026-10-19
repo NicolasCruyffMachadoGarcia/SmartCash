@@ -196,15 +196,6 @@ function App() {
       if (!respuestaPlantilla.ok) throw new Error('Plantilla no encontrada');
       const arrayBufferPlantilla = await respuestaPlantilla.arrayBuffer();
 
-      // Solo en modo "Contrato + Gratificación": se carga la 2da plantilla y se arma un ZIP
-      let arrayBufferGratificacion = null;
-      let zipFinal = null;
-      if (incluirGratificacion) {
-        const respuestaGrat = await fetch('/plantilla_gratificacion.docx');
-        if (!respuestaGrat.ok) throw new Error('Plantilla de gratificación no encontrada');
-        arrayBufferGratificacion = await respuestaGrat.arrayBuffer();
-        zipFinal = new PizZip();
-      }
 
       const hoy = new Date();
       const diaHoy = hoy.getDate() < 10 ? `0${hoy.getDate()}` : `${hoy.getDate()}`;
@@ -221,6 +212,9 @@ function App() {
         const correlativo = datosParaWord['CORRELAT'] || datosParaWord['CORRELATIVO'] || '';
         const dniCliente = datosParaWord['N°_DOCUMENTO'] || datosParaWord['N°_DOCUN'] || datosParaWord['N°_DOCU'] || 'Sin_DNI';
         
+        // Flag que activa (o no) la hoja de gratificación al final de plantilla.docx ({#GRATIFICACION}...{/GRATIFICACION})
+        datosParaWord['GRATIFICACION'] = incluirGratificacion;
+
         // Clave limpia {DNI} para la plantilla de gratificación (no pisa una columna DNI si ya existe)
         if (!datosParaWord['DNI']) datosParaWord['DNI'] = dniCliente;
 
@@ -282,22 +276,9 @@ function App() {
         }
 
         const prefijoCorrelativo = correlativo ? `${correlativo}_` : '';
-        const nombreContrato = `${prefijoCorrelativo}contrato de crédito ${dniCliente}.docx`;
-
-        if (incluirGratificacion) {
-          zipFinal.file(nombreContrato, renderizarDocx(arrayBufferPlantilla, datosParaWord, 'uint8array'));
-          zipFinal.file(
-            `${prefijoCorrelativo}autorización gratificación ${dniCliente}.docx`,
-            renderizarDocx(arrayBufferGratificacion, datosParaWord, 'uint8array')
-          );
-        } else {
-          saveAs(renderizarDocx(arrayBufferPlantilla, datosParaWord, 'blob'), nombreContrato);
-        }
-      }
-
-      if (incluirGratificacion) {
-        const blobZip = zipFinal.generate({ type: 'blob', compression: 'DEFLATE' });
-        saveAs(blobZip, `contratos_con_gratificacion_${fechaHoyFormateada.replace(/\//g, '-')}.zip`);
+        const sufijo = incluirGratificacion ? ' y gratificación' : '';
+        const nombreArchivo = `${prefijoCorrelativo}contrato de crédito${sufijo} ${dniCliente}.docx`;
+        saveAs(renderizarDocx(arrayBufferPlantilla, datosParaWord, 'blob'), nombreArchivo);
       }
 
     } catch (error) {
@@ -427,7 +408,7 @@ function App() {
               {archivoExcel ? `Contrato + Gratificación (${totalFilas})` : 'Contrato + Gratificación'}
             </button>
             <p className="mt-2 text-center text-xs text-slate-400 font-medium">
-              Genera ambos documentos por cliente en un .zip · Disponible hasta el 31/12/2026
+              Agrega la autorización de gratificación al final del contrato · Disponible hasta el 31/12/2026
             </p>
           </>
         )}
