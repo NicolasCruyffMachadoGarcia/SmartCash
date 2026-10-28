@@ -21,6 +21,22 @@ const diccRUCs = {
 const GRATIFICACION_HASTA = new Date(2026, 11, 31, 23, 59, 59); // 31/12/2026
 const gratificacionActiva = () => new Date() <= GRATIFICACION_HASTA;
 
+// Normaliza encabezados del Excel: sin tildes, mayúsculas y solo letras/números ("Comisión / Cuotas" -> "COMISIONCUOTAS")
+const normalizarClave = (k) =>
+  k.toString().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+
+// Convierte celdas tipo 12.5, "12,50" o "S/ 12.50" a número
+function parseNumero(v) {
+  if (typeof v === 'number') return v;
+  if (v === undefined || v === null) return 0;
+  let t = v.toString().replace(/S\/|\s/gi, '');
+  t = t.includes(',') && !t.includes('.') ? t.replace(',', '.') : t.replace(/,/g, '');
+  const n = parseFloat(t);
+  return isNaN(n) ? 0 : n;
+}
+
+const redondear2 = (n) => Math.round(n * 100) / 100;
+
 // Renderiza una plantilla .docx con los datos de una fila
 function renderizarDocx(arrayBufferPlantilla, datos, tipo = 'blob') {
   const zip = new PizZip(arrayBufferPlantilla.slice(0));
@@ -197,6 +213,18 @@ function App() {
       const arrayBufferPlantilla = await respuestaPlantilla.arrayBuffer();
 
 
+      // En modo gratificación el Excel debe traer las columnas INTERESES y COMISION
+      if (incluirGratificacion) {
+        const claves = new Set(datosExcel.flatMap((f) => Object.keys(f)).map(normalizarClave));
+        const faltan = [];
+        if (!claves.has('INTERESES') && !claves.has('INTERES')) faltan.push('INTERESES');
+        if (![...claves].some((k) => k.startsWith('COMISION'))) faltan.push('COMISION');
+        if (faltan.length) {
+          alert(`Al Excel le faltan estas columnas para la gratificación: ${faltan.join(', ')}.`);
+          return;
+        }
+      }
+
       const hoy = new Date();
       const diaHoy = hoy.getDate() < 10 ? `0${hoy.getDate()}` : `${hoy.getDate()}`;
       const mesHoyNum = (hoy.getMonth() + 1) < 10 ? `0${hoy.getMonth() + 1}` : `${hoy.getMonth() + 1}`;
@@ -273,6 +301,28 @@ function App() {
               }
             }
           }
+        }
+
+        // Gratificación: interés, comisión y total.
+        // Se leen de la fila ORIGINAL (fila) porque el bloque de tasas de arriba reescribe cualquier columna que contenga "interes".
+        if (incluirGratificacion) {
+          let interes = 0;
+          let comision = 0;
+          for (const [k, v] of Object.entries(fila)) {
+            const kn = normalizarClave(k);
+            if (kn === 'INTERESES' || kn === 'INTERES') {
+              interes = parseNumero(v);
+            } else if (kn.startsWith('COMISION')) {
+              const n = parseNumero(v);
+              // Comisión / Cuotas: si la columna ya viene por cuota (el encabezado dice "cuotas") se usa tal cual
+              comision = kn.includes('CUOTA') || numCuotas <= 0 ? n : n / numCuotas;
+            }
+          }
+          const interesR = redondear2(interes);
+          const comisionR = redondear2(comision);
+          datosParaWord['GRAT_INTERES'] = interesR.toFixed(2);
+          datosParaWord['GRAT_COMISION'] = comisionR.toFixed(2);
+          datosParaWord['GRAT_TOTAL'] = redondear2(interesR + comisionR).toFixed(2);
         }
 
         const prefijoCorrelativo = correlativo ? `${correlativo}_` : '';
